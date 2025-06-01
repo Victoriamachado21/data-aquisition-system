@@ -96,3 +96,98 @@ private:
                 }
             });
     }
+    void handle_log(const std::string& line) {
+        auto parts = split(line, '|');
+        if (parts.size() != 4) {
+            write("ERROR|INVALID_FORMAT\r\n");
+            return;
+        }
+
+        LogRecord record;
+        std::string sensor_id = parts[1];
+        std::strncpy(record.sensor_id, sensor_id.c_str(), sizeof(record.sensor_id));
+        record.timestamp = string_to_time_t(parts[2]);
+        record.value = std::stod(parts[3]);
+
+        // AJUDA A VER O QUE ESTA RECEBENDO
+        std::cout << "[LOG] Sensor: " << sensor_id << ", Timestamp: " << parts[2] << ", Value: " << record.value << std::endl;
+
+        write_log_record(sensor_id, record);
+        read();
+    }
+
+    void handle_get(const std::string& line) {
+        auto parts = split(line, '|');
+        if (parts.size() != 3) {
+            write("ERROR|INVALID_FORMAT\r\n");
+            return;
+        }
+
+        std::string sensor_id = parts[1];
+        int n = std::stoi(parts[2]);
+
+        std::string response = read_log_records(sensor_id, n);
+
+        // AJUDA A VER O QUE ESTA RECEBENDO
+        std::cout << "[GET] Sensor: " << sensor_id << ", N: " << n << "\n[RESPOSTA] " << response;
+
+        write(response);
+    }
+
+    void write(const std::string& message) {
+        auto self(shared_from_this());
+        boost::asio::async_write(socket_, boost::asio::buffer(message),
+            [this, self](boost::system::error_code ec, std::size_t) {
+                if (!ec) {
+                    read();
+                }
+            });
+    }
+
+    std::vector<std::string> split(const std::string& str, char delimiter) {
+        std::vector<std::string> tokens;
+        std::istringstream stream(str);
+        std::string token;
+        while (std::getline(stream, token, delimiter)) {
+            tokens.push_back(token);
+        }
+        return tokens;
+    }
+
+    tcp::socket socket_;
+    boost::asio::streambuf buffer_;
+};
+
+class Server {
+public:
+    Server(boost::asio::io_context& io_context, short port)
+        : acceptor_(io_context, tcp::endpoint(tcp::v4(), port)) {
+        accept();
+    }
+
+private:
+    void accept() {
+        acceptor_.async_accept(
+            [this](boost::system::error_code ec, tcp::socket socket) {
+                if (!ec) {
+                    std::make_shared<Session>(std::move(socket))->start();
+                }
+                accept();
+            });
+    }
+
+    tcp::acceptor acceptor_;
+};
+
+int main(int argc, char* argv[]) {
+    if (argc != 2) {
+        std::cerr << "Uso: ./server <porta>\n";
+        return 1;
+    }
+
+    boost::asio::io_context io_context;
+    Server server(io_context, std::atoi(argv[1]));
+    std::cout << "[INFO] Servidor iniciado na porta " << argv[1] << std::endl;
+    io_context.run();
+    return 0;
+}
